@@ -1,0 +1,1202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Full E-commerce Backend using CloudFormation, Python Lambdas, DynamoDB, API Gateway, Step Functions"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: "dev"
+    AllowedValues: [dev, prod]
+
+  LabRoleArn:
+    Type: String
+    Description: ARN of the IAM Role all Lambdas will assume
+    Default: arn:aws:iam::${AWS::AccountId}:role/LabRole
+
+Resources:
+
+# ============================================================
+# SECTION 1 — DYNAMODB TABLES
+# ============================================================
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Users
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "products-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: productId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: productId
+          KeyType: HASH
+
+  CartsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "carts-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: productId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: productId
+          KeyType: RANGE
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "orders-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+
+      GlobalSecondaryIndexes:
+        - IndexName: userId-index
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+
+  UserActivityTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "user-activity-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+# ============================================================
+# SECTION 3 — LAMBDAS (INLINE PYTHON)
+# ============================================================
+
+  # Lambda: user registration
+  UserRegisterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: UserRegister
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !Ref LabRoleArn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+
+          dynamodb = boto3.resource('dynamodb')
+         
+          def lambda_handler(event, context):
+              body = json.loads(event.get('body','{}'))
+              missing = [k for k in ['email','name','role','address','phone'] if not body.get(k)]
+              if missing:
+                  return {'statusCode':400,'body':json.dumps({'error':f"Missing fields: {', '.join(missing)}"})}
+              item = {k: body[k] for k in ['email','name','role','address','phone']}
+              dynamodb.Table('Users').put_item(Item=item)
+             
+              return {'statusCode':200,'body':json.dumps({'message':'User registered'})}
+      MemorySize: 128
+      Timeout: 10
+
+  # Lambda: PostConfirmation trigger
+  AssignUserGroupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AssignUserGroup
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Code:
+        ZipFile: |
+          const { CognitoIdentityProviderClient, AdminAddUserToGroupCommand } = require("@aws-sdk/client-cognito-identity-provider");
+          const cognito = new CognitoIdentityProviderClient({});
+          exports.handler = async (event) => {
+            const userPoolId = event.userPoolId;
+            const username = event.userName;
+            const role = event.request.userAttributes["custom:role"];
+            if (role === "admin" || role === "user") {
+              await cognito.send(new AdminAddUserToGroupCommand({
+                GroupName: role,
+                UserPoolId: userPoolId,
+                Username: username
+              }));
+            }
+            return event;
+          };
+      MemorySize: 128
+      Timeout: 10
+
+  AdminServiceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "admin-service-${Environment}"
+      Handler: index.handler
+      Runtime: python3.12
+      Role: !Ref LabRoleArn
+      Timeout: 10
+      Environment:
+        Variables:
+          PRODUCTS_TABLE: !Ref ProductsTable
+      Code:
+        ZipFile: |
+          import json, boto3, uuid, os, datetime
+          from decimal import Decimal
+
+          dynamo = boto3.resource('dynamodb')
+          table = dynamo.Table(os.environ["PRODUCTS_TABLE"])
+
+          def iso_now():
+              return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          def error(msg, code=400):
+              return {"statusCode": code, "body": json.dumps({"error": msg})}
+
+          def convert_to_decimal(obj):
+              if isinstance(obj, float):
+                  return Decimal(str(obj))
+              return obj
+
+          def handler(event, context):
+              route = event.get("routeKey", "")
+              body = json.loads(event.get("body", "{}") or "{}")
+
+              # ================================================================
+              # ADD PRODUCT
+              # ================================================================
+              if "admin/add" in route:
+
+                  required = ["name", "price", "qty", "category"]
+                  missing = [f for f in required if f not in body]
+                  if missing:
+                      return error(f"Missing fields: {missing}")
+
+                  if body["price"] < 0:
+                      return error("Price cannot be negative")
+
+                  if body["qty"] < 0:
+                      return error("Quantity cannot be negative")
+
+                  product_id = str(uuid.uuid4())
+                  now = iso_now()
+
+                  item = {
+                      "productId": product_id,
+                      "name": body["name"],
+                      "price": convert_to_decimal(body["price"]),
+                      "qty": convert_to_decimal(body["qty"]),
+                      "category": body["category"],
+                      "description": body.get("description", ""),
+                      "imageUrl": body.get("imageUrl", ""),
+                      "createdAt": now,
+                      "updatedAt": now
+                  }
+
+                  table.put_item(Item=item)
+
+                  return {
+                      "statusCode": 200,
+                      "body": json.dumps({"message": "Product added", "productId": product_id})
+                  }
+
+              # ================================================================
+              # UPDATE PRODUCT
+              # ================================================================
+              if "admin/update" in route:
+
+                  if "productId" not in body:
+                      return error("Missing productId")
+
+                  productId = body["productId"]
+
+                  update_fields = []
+                  expr_values = {}
+                  expr_names = {}
+
+                  allowed_fields = ["name", "price", "qty", "category", "description", "imageUrl"]
+
+                  for field in allowed_fields:
+                      if field in body:
+
+                          # Validation
+                          if field == "price" and body[field] < 0:
+                              return error("Price cannot be negative")
+
+                          if field == "qty" and body[field] < 0:
+                              return error("Quantity cannot be negative")
+
+                          # Add update expressions
+                          update_fields.append(f"#{field} = :{field}")
+                          expr_names[f"#{field}"] = field
+
+                          # Convert floats → Decimal for DynamoDB
+                          value = body[field]
+                          if isinstance(value, float):
+                              value = Decimal(str(value))
+                          expr_values[f":{field}"] = value
+
+                  # Always update timestamp
+                  update_fields.append("#updatedAt = :updatedAt")
+                  expr_names["#updatedAt"] = "updatedAt"
+                  expr_values[":updatedAt"] = iso_now()
+
+                  update_expr = "SET " + ", ".join(update_fields)
+
+                  table.update_item(
+                      Key={"productId": productId},
+                      UpdateExpression=update_expr,
+                      ExpressionAttributeValues=expr_values,
+                      ExpressionAttributeNames=expr_names
+                  )
+
+                  return {"statusCode": 200, "body": "Product updated"}
+
+              # ================================================================
+              # DELETE PRODUCT
+              # ================================================================
+              if "admin/delete" in route:
+
+                  if "productId" not in body:
+                      return error("Missing productId")
+
+                  table.delete_item(Key={"productId": body["productId"]})
+
+                  return {"statusCode": 200, "body": "Product deleted"}
+
+              # ================================================================
+              return error("Invalid admin action")
+
+
+  ProductServiceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "product-service-${Environment}"
+      Handler: index.handler
+      Runtime: python3.12
+      Role: !Ref LabRoleArn
+      Timeout: 10
+      Environment:
+        Variables:
+          PRODUCTS_TABLE: !Ref ProductsTable
+      Code:
+        ZipFile: |
+          import json, boto3, os
+          from decimal import Decimal
+
+          dynamo = boto3.resource('dynamodb')
+          table = dynamo.Table(os.environ["PRODUCTS_TABLE"])
+
+          def convert_decimal(obj):
+              if isinstance(obj, list):
+                  return [convert_decimal(i) for i in obj]
+              if isinstance(obj, dict):
+                  return {k: convert_decimal(v) for k, v in obj.items()}
+              if isinstance(obj, Decimal):
+                  return float(obj)
+              return obj
+
+          def handler(event, context):
+              route = event.get("routeKey", "")
+              params = event.get("queryStringParameters", {}) or {}
+
+              if "products/list" in route:
+                  items = table.scan().get("Items", [])
+                  return {"statusCode": 200, "body": json.dumps(convert_decimal(items))}
+
+              if "products/details" in route:
+                  pid = params.get("productId")
+                  item = table.get_item(Key={"productId": pid}).get("Item", {})
+                  return {"statusCode": 200, "body": json.dumps(convert_decimal(item))}
+
+              return {"statusCode": 400, "body": "Invalid product request"}
+
+  CartServiceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "cart-service-${Environment}"
+      Handler: index.handler
+      Runtime: python3.12
+      Role: !Ref LabRoleArn
+      Timeout: 10
+      Environment:
+        Variables:
+          CARTS_TABLE: !Ref CartsTable
+          PRODUCTS_TABLE: !Ref ProductsTable
+      Code:
+        ZipFile: |
+          import json, boto3, os
+          from decimal import Decimal
+          from boto3.dynamodb.conditions import Key
+
+          dynamo = boto3.resource('dynamodb')
+          cart_table = dynamo.Table(os.environ["CARTS_TABLE"])
+          product_table = dynamo.Table(os.environ["PRODUCTS_TABLE"])
+
+          def error(msg, code=400):
+              return {"statusCode": code, "body": json.dumps({"error": msg})}
+
+          def convert_decimal(obj):
+              if isinstance(obj, list):
+                  return [convert_decimal(i) for i in obj]
+              if isinstance(obj, dict):
+                  return {k: convert_decimal(v) for k, v in obj.items()}
+              if isinstance(obj, Decimal):
+                  return float(obj)
+              return obj
+
+          def get_product(pid):
+              res = product_table.get_item(Key={"productId": pid})
+              return res.get("Item")
+
+          def handler(event, context):
+              route = event.get("routeKey", "")
+              body = json.loads(event.get("body", "{}") or "{}")
+              params = event.get("queryStringParameters", {}) or {}
+
+              # ================================================================
+              # ADD ITEM TO CART
+              # ================================================================
+              if "cart/add" in route:
+
+                  required = ["userId", "productId", "quantity"]
+                  missing = [f for f in required if f not in body]
+                  if missing:
+                      return error(f"Missing fields: {missing}")
+
+                  userId = body["userId"]
+                  productId = body["productId"]
+                  qty = body["quantity"]
+
+                  if qty <= 0:
+                      return error("Quantity must be >= 1")
+
+                  if qty > 10:
+                      return error("Max quantity per item is 10")
+
+                  # Check product exists
+                  product = get_product(productId)
+                  if not product:
+                      return error("Product not found", 404)
+
+                  if product.get("qty", 0) < qty:
+                      return error("Not enough stock available", 400)
+
+                  # If item exists → update qty
+                  existing = cart_table.get_item(
+                      Key={"userId": userId, "productId": productId}
+                  ).get("Item")
+
+                  if existing:
+                      new_qty = existing["quantity"] + qty
+                      if new_qty > 10:
+                          return error("Total quantity cannot exceed 10")
+
+                      if new_qty > product["qty"]:
+                          return error("Not enough stock for updated quantity")
+
+                      cart_table.update_item(
+                          Key={"userId": userId, "productId": productId},
+                          UpdateExpression="SET quantity = :q",
+                          ExpressionAttributeValues={":q": new_qty}
+                      )
+
+                      return {"statusCode": 200, "body": "Quantity updated"}
+
+                  # New cart item
+                  cart_table.put_item(Item={
+                      "userId": userId,
+                      "productId": productId,
+                      "quantity": qty
+                  })
+
+                  return {"statusCode": 200, "body": "Added to cart"}
+
+              # ================================================================
+              # UPDATE CART ITEM
+              # ================================================================
+              if "cart/update" in route:
+
+                  required = ["userId", "productId", "quantity"]
+                  missing = [f for f in required if f not in body]
+                  if missing:
+                      return error(f"Missing fields: {missing}")
+
+                  qty = body["quantity"]
+                  if qty <= 0:
+                      return error("Quantity must be >= 1")
+                  if qty > 10:
+                      return error("Max quantity per item is 10")
+
+                  product = get_product(body["productId"])
+                  if not product:
+                      return error("Product not found", 404)
+
+                  if qty > product.get("qty", 0):
+                      return error("Not enough stock available")
+
+                  cart_table.update_item(
+                      Key={"userId": body["userId"], "productId": body["productId"]},
+                      UpdateExpression="SET quantity = :q",
+                      ExpressionAttributeValues={":q": qty}
+                  )
+
+                  return {"statusCode": 200, "body": "Cart updated"}
+
+              # ================================================================
+              # REMOVE ONE ITEM FROM CART
+              # ================================================================
+              if "cart/remove" in route:
+
+                  required = ["userId", "productId"]
+                  missing = [f for f in required if f not in body]
+                  if missing:
+                      return error(f"Missing fields: {missing}")
+
+                  cart_table.delete_item(
+                      Key={"userId": body["userId"], "productId": body["productId"]}
+                  )
+
+                  return {"statusCode": 200, "body": "Item removed"}
+
+              # ================================================================
+              # CLEAR CART
+              # ================================================================
+              if "cart/clear" in route:
+
+                  if "userId" not in body:
+                      return error("Missing userId")
+
+                  uid = body["userId"]
+                  items = cart_table.query(KeyConditionExpression=Key("userId").eq(uid)).get("Items", [])
+
+                  for i in items:
+                      cart_table.delete_item(Key={"userId": uid, "productId": i["productId"]})
+
+                  return {"statusCode": 200, "body": "Cart cleared"}
+
+              # ================================================================
+              # GET CART WITH FULL DETAILS
+              # ================================================================
+              if "cart/get" in route:
+
+                  userId = params.get("userId")
+                  if not userId:
+                      return error("Missing userId")
+
+                  items = cart_table.query(
+                      KeyConditionExpression=Key("userId").eq(userId)
+                  ).get("Items", [])
+
+                  detailed = []
+                  cart_total = 0
+
+                  for i in items:
+                      product = get_product(i["productId"])
+                      if not product:
+                          continue
+
+                      unit_price = float(product["price"])
+                      qty = int(i["quantity"])
+                      subtotal = round(unit_price * qty, 2)
+                      cart_total += subtotal
+
+                      detailed.append({
+                          "productId": i["productId"],
+                          "name": product["name"],
+                          "category": product.get("category", ""),
+                          "unitPrice": unit_price,
+                          "qty": i["quantity"],
+                          "subtotal": subtotal
+                      })
+
+                  return {
+                      "statusCode": 200,
+                      "body": json.dumps({
+                          "userId": userId,
+                          "items": convert_decimal(detailed),
+                          "cartTotal": round(cart_total, 2)
+                      })
+                  }
+
+              # Unknown route
+              return error("Invalid cart request")
+
+
+  OrderServiceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "order-service-${Environment}"
+      Handler: index.handler
+      Runtime: python3.12
+      Role: !Ref LabRoleArn
+      Timeout: 10
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTable
+          PRODUCTS_TABLE: !Ref ProductsTable
+          CARTS_TABLE: !Ref CartsTable
+      Code:
+        ZipFile: |
+          import json, boto3, uuid, os, datetime
+          from decimal import Decimal
+          from boto3.dynamodb.conditions import Key
+
+          dynamo = boto3.resource('dynamodb')
+          orders_table = dynamo.Table(os.environ["ORDERS_TABLE"])
+          cart_table = dynamo.Table(os.environ["CARTS_TABLE"])
+          products_table = dynamo.Table(os.environ["PRODUCTS_TABLE"])
+
+          def iso_now():
+              return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          def error(msg, code=400):
+              return {"statusCode": code, "body": json.dumps({"error": msg})}
+
+          def convert_decimal(obj):
+              if isinstance(obj, list):
+                  return [convert_decimal(i) for i in obj]
+              if isinstance(obj, dict):
+                  return {k: convert_decimal(v) for k, v in obj.items()}
+              if isinstance(obj, Decimal):
+                  return float(obj)
+              return obj
+
+          def get_product(pid):
+              res = products_table.get_item(Key={"productId": pid})
+              return res.get("Item")
+
+          def handler(event, context):
+              route = event.get("routeKey", "")
+              body = json.loads(event.get("body", "{}") or "{}")
+
+              # ================================================================
+              # LIST ORDERS
+              # ================================================================
+              if "orders/list" in route:
+                  orders = orders_table.scan().get("Items", [])
+                  return {
+                      "statusCode": 200,
+                      "body": json.dumps(convert_decimal(orders))
+                  }
+
+              # ================================================================
+              # CREATE ORDER
+              # ================================================================
+              if "orders/create" in route:
+
+                  userId = body.get("userId")
+                  if not userId:
+                      return error("Missing userId")
+
+                  # Fetch user's cart
+                  cart_items = cart_table.query(
+                      KeyConditionExpression=Key("userId").eq(userId)
+                  ).get("Items", [])
+
+                  if not cart_items:
+                      return error("Cart is empty")
+
+                  order_items = []
+                  order_total = 0
+                  inventory_updates = []
+
+                  # ---------------- VALIDATE & CALCULATE TOTALS ----------------
+                  for c in cart_items:
+                      pid = c["productId"]
+                      qty = int(c["quantity"])
+
+                      product = get_product(pid)
+                      if not product:
+                          return error(f"Product {pid} not found", 404)
+
+                      if product.get("qty", 0) < qty:
+                          return error(f"Insufficient stock for {product['name']}")
+
+                      unit_price = float(product["price"])
+                      subtotal = round(unit_price * qty, 2)
+                      order_total += subtotal
+
+                      order_items.append({
+                          "productId": pid,
+                          "name": product["name"],
+                          "qty": qty,
+                          "unitPrice": unit_price,
+                          "subtotal": subtotal
+                      })
+
+                      # Prepare inventory deduction
+                      inventory_updates.append({
+                          "productId": pid,
+                          "newQty": Decimal(str(product["qty"])) - Decimal(str(qty))
+                      })
+
+                  # ---------------- CREATE ORDER RECORD ----------------
+                  oid = str(uuid.uuid4())
+                  timestamp = iso_now()
+
+                  order_doc = {
+                      "orderId": oid,
+                      "userId": userId,
+                      "items": order_items,
+                      "orderTotal": round(order_total, 2),
+                      "status": "PENDING",
+                      "createdAt": timestamp,
+                      "updatedAt": timestamp
+                  }
+
+                  # Save order in PENDING status
+                  orders_table.put_item(Item=json.loads(json.dumps(order_doc), parse_float=Decimal))
+
+                  # ---------------- DEDUCT INVENTORY ----------------
+                  for upd in inventory_updates:
+                      products_table.update_item(
+                          Key={"productId": upd["productId"]},
+                          UpdateExpression="SET qty = :q",
+                          ExpressionAttributeValues={":q": upd["newQty"]}
+                      )
+
+                  # ---------------- UPDATE ORDER STATUS → CONFIRMED ----------------
+                  order_doc["status"] = "CONFIRMED"
+                  order_doc["updatedAt"] = iso_now()
+
+                  orders_table.put_item(Item=json.loads(json.dumps(order_doc), parse_float=Decimal))
+
+                  # ---------------- CLEAR CART ----------------
+                  for item in cart_items:
+                      cart_table.delete_item(
+                          Key={"userId": userId, "productId": item["productId"]}
+                      )
+
+                  return {
+                      "statusCode": 200,
+                      "body": json.dumps({
+                          "message": "Order created successfully",
+                          "orderId": oid,
+                          "orderTotal": round(order_total, 2),
+                          "status": "CONFIRMED"
+                      })
+                  }
+
+              if "orders/user" in route:
+                  params = event.get("queryStringParameters", {}) or {}
+                  if "userId" not in params:
+                    return error("Missing userId")
+
+                  userId = params.get("userId")
+
+                  # Query instead of scan
+                  resp = orders_table.query(
+                      IndexName="userId-index",
+                      KeyConditionExpression=Key("userId").eq(userId)
+                  )
+
+                  return {
+                    "statusCode": 200,
+                    "body": json.dumps(resp.get("Items", []), default=convert_decimal)
+                  }
+
+              # ================================================================
+              return error("Invalid order request")
+
+
+  RecommendationServiceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "recommendation-service-${Environment}"
+      Handler: index.handler
+      Runtime: python3.12
+      Role: !Ref LabRoleArn
+      Timeout: 5
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps({
+                      "recommendations": [
+                          {"productId": "P1", "score": 0.98},
+                          {"productId": "P2", "score": 0.93}
+                      ]
+                  })
+              }
+
+# ============================================================
+# SECTION 4 — API GATEWAY HTTP API
+# ============================================================
+# (unchanged — keeping your existing routes & integrations)
+  
+
+  EcommerceHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "ecommerce-api-${Environment}"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowMethods: ['GET','POST','PUT','DELETE','OPTIONS']
+        AllowOrigins: ['*']
+        AllowHeaders: ['Content-Type','Authorization']
+
+  UserRegisterIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt UserRegisterFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  AdminIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt AdminServiceLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  ProductIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ProductServiceLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  CartIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt CartServiceLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  OrderIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt OrderServiceLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  RecommendationIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt RecommendationServiceLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  # Routes
+  UserRegisterRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: 'POST /register'
+      Target: !Sub 'integrations/${UserRegisterIntegration}'
+
+  AdminAddRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /admin/add"
+      Target: !Sub "integrations/${AdminIntegration}"
+
+  AdminUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /admin/update"
+      Target: !Sub "integrations/${AdminIntegration}"
+
+  AdminDeleteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /admin/delete"
+      Target: !Sub "integrations/${AdminIntegration}"
+
+  ProductListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "GET /products/list"
+      Target: !Sub "integrations/${ProductIntegration}"
+
+  ProductDetailsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "GET /products/details"
+      Target: !Sub "integrations/${ProductIntegration}"
+
+  CartAddRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /cart/add"
+      Target: !Sub "integrations/${CartIntegration}"
+
+  CartUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /cart/update"
+      Target: !Sub "integrations/${CartIntegration}"
+  
+  CartGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "GET /cart/get"
+      Target: !Sub "integrations/${CartIntegration}"
+  
+  CartRemoveOneRoute:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref EcommerceHttpApi
+        RouteKey: "POST /cart/remove"
+        Target: !Sub "integrations/${CartIntegration}"
+  
+  CartClearRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /cart/clear"
+      Target: !Sub "integrations/${CartIntegration}"
+
+  OrderListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "GET /orders/list"
+      Target: !Sub "integrations/${OrderIntegration}"
+
+  OrderCreateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "POST /orders/create"
+      Target: !Sub "integrations/${OrderIntegration}"
+
+  OrderByUserRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "GET /orders/user"
+      Target: !Sub "integrations/${OrderIntegration}"
+
+  RecommendationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      RouteKey: "GET /recommendations"
+      Target: !Sub "integrations/${RecommendationIntegration}"
+
+  EcommerceApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref EcommerceHttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+# ============================================================
+# SECTION 5 — STEP FUNCTIONS
+# ============================================================
+
+  CheckoutStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "checkout-${Environment}"
+      RoleArn: !Ref LabRoleArn
+      DefinitionString: !Sub |
+        {
+          "StartAt": "ValidateCart",
+          "States": {
+            "ValidateCart": {
+              "Type": "Task",
+              "Resource": "${CartServiceLambda.Arn}",
+              "Next": "CalculateTotal"
+            },
+            "CalculateTotal": {
+              "Type": "Task",
+              "Resource": "${CartServiceLambda.Arn}",
+              "Next": "ProcessPayment"
+            },
+            "ProcessPayment": {
+              "Type": "Task",
+              "Resource": "${CartServiceLambda.Arn}",
+              "Next": "CreateOrder"
+            },
+            "CreateOrder": {
+              "Type": "Task",
+              "Resource": "${OrderServiceLambda.Arn}",
+              "Next": "ClearCart"
+            },
+            "ClearCart": {
+              "Type": "Task",
+              "Resource": "${CartServiceLambda.Arn}",
+              "End": true
+            }
+          }
+        }
+
+# ============================================================
+# SECTION 6 — S3 BUCKETS
+# ============================================================
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "frontend-ecommerce-${Environment}-${AWS::AccountId}"
+
+  ProductImagesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "product-images-${Environment}-${AWS::AccountId}"
+
+  MLModelsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "ml-models-${Environment}-${AWS::AccountId}"
+
+# Lambda Permissions so API Gateway can invoke Auth Lambdas
+  
+  UserRegisterPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UserRegisterFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/register'
+  
+  AssignUserGroupPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AssignUserGroupFunction
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt EcommerceUserPool.Arn
+    
+  # ============================================================
+# LAMBDA PERMISSIONS FOR API GATEWAY
+# ============================================================
+
+  AdminAddPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: 
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/admin/add"
+
+  AdminUpdatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: 
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/admin/update"
+
+  AdminDeletePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: 
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/admin/delete"
+
+  ProductListPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProductServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/GET/products/list"
+
+  ProductDetailsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProductServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/GET/products/details"
+
+  CartAddPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CartServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/cart/add"
+
+  CartUpdatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CartServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/cart/update"
+  
+  CartGetPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CartServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/GET/cart/get"
+
+  CartRemoveOnePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CartServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/cart/remove"
+
+  CartClearPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CartServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/cart/clear"
+
+  OrderListPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OrderServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/GET/orders/list"
+
+  OrderCreatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OrderServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/POST/orders/create"
+  
+  OrderByUserPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OrderServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/GET/orders/user"
+
+  RecommendationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RecommendationServiceLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EcommerceHttpApi}/*/GET/recommendations"
+
+
+# Cognito User Pool & Groups
+  EcommerceUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: Ecommerce User pool
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+      LambdaConfig:
+        PostConfirmation: !GetAtt AssignUserGroupFunction.Arn
+  
+  EcommerceUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: ecommerce-client
+      UserPoolId: !Ref EcommerceUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows: [USER_PASSWORD_AUTH]
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
+  
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { GroupName: Admin, UserPoolId: !Ref EcommerceUserPool, RoleArn: !Ref LabRoleArn, Precedence: 2 }
+  
+  UserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { GroupName: User, UserPoolId: !Ref EcommerceUserPool, RoleArn: !Ref LabRoleArn, Precedence: 1 }
+# ============================================================
+# OUTPUTS
+# ============================================================
+
+Outputs:
+  ApiUrl:
+    Description: "Base URL for the E-commerce API"
+    Value: !Sub "https://${EcommerceHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  ProductsTableName:
+    Value: !Ref ProductsTable
+
+  Lambdas:
+    Value: "Admin, Product, Cart, Order, Recommendation Lambdas deployed"
+
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref EcommerceUserPool
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref EcommerceUserPoolClient
