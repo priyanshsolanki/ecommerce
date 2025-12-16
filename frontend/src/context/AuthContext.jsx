@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem("auth", JSON.stringify(auth.payload));
       localStorage.setItem("token", auth.jwtToken);
       
-      setAuthUser(auth);
+      setAuthUser(auth.payload);
       setToken(auth.jwtToken); 
     } catch (error) {
       console.error('Error creating user session:', error);

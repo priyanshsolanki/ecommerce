@@ -50,17 +50,6 @@ const UnauthorizedPage = () => {
               Return to Home
             </button>
           </div>
-
-          {/* Support Link */}
-          {/* <div className="mt-8 text-sm text-gray-500">
-            Need help?{' '}
-            <a 
-              href="/support" 
-              className="text-red-500 hover:text-red-600 font-medium"
-            >
-              Contact Support
-            </a>
-          </div> */}
         </div>
       </div>
     </div>

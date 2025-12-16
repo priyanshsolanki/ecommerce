@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 export default function OrderSuccess() {
   const { id } = useParams();
@@ -64,26 +64,19 @@ export default function OrderSuccess() {
 
           {/* Action Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a
-              href="/user/shop"
+            <Link
+              to="/user/shop"
               className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
             >
               Continue Shopping
-            </a>
+            </Link>
             
-            <a
-              href="/orders"
+            <Link
+              to="/orders"
               className="bg-white hover:bg-gray-50 text-gray-700 border-2 border-gray-300 px-8 py-3 rounded-xl font-semibold transition-all duration-200"
             >
               View Orders
-            </a>
-          </div>
-
-          {/* Support Link */}
-          <div className="mt-8 pt-8 border-t">
-            <p className="text-sm text-gray-500">
-              Need help? <a href="/support" className="text-blue-600 hover:text-blue-700 font-medium">Contact Support</a>
-            </p>
+            </Link>
           </div>
         </div>
 

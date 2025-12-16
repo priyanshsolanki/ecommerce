@@ -4,6 +4,7 @@ import { orderService } from "../api/orderService";
 import { cartService } from "../api/cartService";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
+import { userActivityService } from "../api/userActivityService";
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -21,6 +22,11 @@ export default function Checkout() {
 
   useEffect(() => {
     loadCart(authUser.sub);
+    userActivityService.log({
+      userId: authUser.sub,
+      action: "purchase",
+      productId: "multiple"
+    });    
   }, [authUser]);
 
   const confirmOrder = async () => {

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Eye, EyeOff, Mail, Lock, ShoppingBag, Shield, Zap, TrendingUp } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { authenticate } from "./../../api/authService";
 import { useAuth } from "../../context/AuthContext";
@@ -98,7 +98,7 @@ export const Login = () => {
         autoClose: 3000,
         theme: "dark",
       });
-      window.location.replace(`/${getRole(data.idToken.jwtToken)}/shop`);
+      navigate(`/${getRole(data.idToken.jwtToken)}/shop`);
     } catch (err) {
       toast.error(err.message || "Login failed. Please try again.", {
         position: "top-right",
@@ -273,11 +273,6 @@ export const Login = () => {
                     Remember me
                   </label>
                 </div>
-                <div className="text-sm">
-                  <a href="/forgot-password" className="font-medium text-blue-600 hover:text-blue-500 transition-colors">
-                    Forgot password?
-                  </a>
-                </div>
               </div>
 
               {/* Submit Button */}
@@ -312,19 +307,19 @@ export const Login = () => {
               <div className="text-center mb-6">
                 <p className="text-sm text-gray-600">
                   Don't have an account?{" "}
-                  <a href="/register/user" className="font-semibold text-blue-600 hover:text-blue-500 transition-colors">
+                  <Link to="/register/user" className="font-semibold text-blue-600 hover:text-blue-500 transition-colors">
                     Create one now
-                  </a>
+                  </Link>
                 </p>
               </div>
 
               <div className="pt-6 border-t border-gray-200">
-                <a href="/" className="flex items-center justify-center text-sm text-gray-600 hover:text-gray-900 transition-colors">
+                <Link to="/" className="flex items-center justify-center text-sm text-gray-600 hover:text-gray-900 transition-colors">
                   <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                   </svg>
                   Back to Home
-                </a>
+                </Link>
               </div>
             </div>
           </div>

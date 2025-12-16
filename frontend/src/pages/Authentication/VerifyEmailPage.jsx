@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Formik, Form, Field, ErrorMessage } from 'formik';
 import * as Yup from 'yup';
 import userpool from '../../aws/cognitoConfig';
@@ -217,17 +217,17 @@ const VerificationEmail = () => {
                     {/* Navigation Links */}
                     <div className="pt-4 border-t border-gray-200 space-y-3">
                       <div className="text-center">
-                        <a href="/login/user" className="text-blue-600 hover:text-blue-700 font-semibold transition-colors">
+                        <Link to="/login/user" className="text-blue-600 hover:text-blue-700 font-semibold transition-colors">
                           Already verified? Sign in
-                        </a>
+                        </Link>
                       </div>
                       <div className="text-center">
-                        <a href="/" className="flex items-center justify-center text-sm text-gray-600 hover:text-gray-900 transition-colors">
+                        <Link to="/" className="flex items-center justify-center text-sm text-gray-600 hover:text-gray-900 transition-colors">
                           <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                           </svg>
                           Back to Home
-                        </a>
+                        </Link>
                       </div>
                     </div>
                   </div>

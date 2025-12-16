@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { productService } from "../api/productService";
 import { cartService } from "../api/cartService";
 import { useAuth } from "../context/AuthContext";
+import { userActivityService } from "../api/userActivityService";
 
 export default function ProductDetails() {
   const { id } = useParams();
@@ -10,8 +11,13 @@ export default function ProductDetails() {
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
   const { authUser } = useAuth();
-
+  
   useEffect(() => {
+    userActivityService.log({
+      userId: authUser.sub,
+      action: "view",
+      productId:id
+    });
     productService.details(id).then(res => setP(res.data));
   }, [id]);
 
@@ -27,6 +33,12 @@ export default function ProductDetails() {
   }
 
   const addToCart = async () => {
+    userActivityService.log({
+      userId: authUser.sub,
+      action: "add_to_cart",
+      productId: id
+    });
+
     await cartService.add({
       userId: authUser.sub,
       productId: id,
@@ -41,12 +53,12 @@ export default function ProductDetails() {
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <a href="/user/shop" className="inline-flex items-center text-blue-600 hover:text-blue-700 font-medium transition">
+          <Link to="/user/shop" className="inline-flex items-center text-blue-600 hover:text-blue-700 font-medium transition">
             <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
             Back to Products
-          </a>
+          </Link>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Menu, X, ShoppingBag, Zap, Shield, Truck, Star, TrendingUp, Gift, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export default function Landing() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -53,12 +54,12 @@ export default function Landing() {
             
             <div className="hidden md:block">
               <div className="ml-10 flex items-baseline space-x-8">
-                <a href="/login/user" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium transition-colors">
+                <Link to="/login/user" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium transition-colors">
                   Sign In
-                </a>
-                <a href="/register/user" className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-2 rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg hover:shadow-xl">
+                </Link>
+                <Link to="/register/user" className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-2 rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg hover:shadow-xl">
                   Get Started
-                </a>
+                </Link>
               </div>
             </div>
             
@@ -77,21 +78,21 @@ export default function Landing() {
         {isMenuOpen && (
           <div className="md:hidden bg-white border-t">
             <div className="px-2 pt-2 pb-3 space-y-1">
-              <a href="#features" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
+              <Link to="#features" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
                 Features
-              </a>
-              <a href="#categories" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
+              </Link>
+              <Link to="#categories" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
                 Categories
-              </a>
-              <a href="#testimonials" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
+              </Link>
+              <Link to="#testimonials" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
                 Reviews
-              </a>
-              <a href="/login/user" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
+              </Link>
+              <Link to="/login/user" className="block px-3 py-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-50">
                 Sign In
-              </a>
-              <a href="/register/user" className="block bg-gradient-to-r from-blue-600 to-blue-700 text-white px-3 py-2 rounded-xl text-sm font-semibold mt-2">
+              </Link>
+              <Link to="/register/user" className="block bg-gradient-to-r from-blue-600 to-blue-700 text-white px-3 py-2 rounded-xl text-sm font-semibold mt-2">
                 Get Started
-              </a>
+              </Link>
             </div>
           </div>
         )}
@@ -123,10 +124,10 @@ export default function Landing() {
                 Discover thousands of products from top brands at unbeatable prices. Your one-stop destination for everything you need and love.
               </p>
               <div className="flex flex-col sm:flex-row gap-4">
-                <a href="/register/user" className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2">
+                <Link to="/register/user" className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2">
                   <ShoppingBag className="w-5 h-5" />
                   Start Shopping
-                </a>
+                </Link>
               </div>
               
               {/* Trust indicators */}
@@ -225,12 +226,12 @@ export default function Landing() {
             Join thousands of happy customers. Create your account and discover amazing deals on products you love.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a href="/register/user" className="bg-white text-blue-600 px-8 py-4 rounded-xl text-lg font-semibold hover:bg-gray-100 transition-colors shadow-xl hover:shadow-2xl">
+            <Link to="/register/user" className="bg-white text-blue-600 px-8 py-4 rounded-xl text-lg font-semibold hover:bg-gray-100 transition-colors shadow-xl hover:shadow-2xl">
               Create Account
-            </a>
-            <a href="/login/user" className="border-2 border-white text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-white hover:text-blue-600 transition-all">
+            </Link>
+            <Link to="/login/user" className="border-2 border-white text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-white hover:text-blue-600 transition-all">
               Sign In
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -254,30 +255,30 @@ export default function Landing() {
             <div>
               <h4 className="text-lg font-semibold mb-4">Shop</h4>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">New Arrivals</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Best Sellers</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">On Sale</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">All Categories</a></li>
+                <li><Link to="#" className="hover:text-white transition-colors">New Arrivals</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Best Sellers</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">On Sale</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">All Categories</Link></li>
               </ul>
             </div>
             
             <div>
               <h4 className="text-lg font-semibold mb-4">Support</h4>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">Help Center</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Track Order</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Returns</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Contact Us</a></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Help Center</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Track Order</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Returns</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Contact Us</Link></li>
               </ul>
             </div>
             
             <div>
               <h4 className="text-lg font-semibold mb-4">Company</h4>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">About Us</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Careers</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Press</a></li>
+                <li><Link to="#" className="hover:text-white transition-colors">About Us</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Careers</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Blog</Link></li>
+                <li><Link to="#" className="hover:text-white transition-colors">Press</Link></li>
               </ul>
             </div>
           </div>

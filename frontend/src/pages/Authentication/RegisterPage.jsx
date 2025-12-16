@@ -1,6 +1,6 @@
 import { CognitoUserAttribute } from "amazon-cognito-identity-js";
 import React, { useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import userpool from "../../aws/cognitoConfig";
@@ -337,18 +337,18 @@ export const Register = () => {
                   <div className="space-y-4 pt-4">
                     <div className="text-center">
                       <span className="text-gray-600">Already have an account? </span>
-                      <a href="/login/user" className="text-blue-600 hover:text-blue-700 font-semibold transition-colors">
+                      <Link to="/login/user" className="text-blue-600 hover:text-blue-700 font-semibold transition-colors">
                         Sign in here
-                      </a>
+                      </Link>
                     </div>
 
                     <div className="pt-4 border-t border-gray-200">
-                      <a href="/" className="flex items-center justify-center text-sm text-gray-600 hover:text-gray-900 transition-colors">
+                      <Link to="/" className="flex items-center justify-center text-sm text-gray-600 hover:text-gray-900 transition-colors">
                         <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                         </svg>
                         Back to Home
-                      </a>
+                      </Link>
                     </div>
                   </div>
                 </Form>

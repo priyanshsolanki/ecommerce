@@ -3,6 +3,8 @@ import { productService } from "../api/productService";
 import { cartService } from "../api/cartService";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
+import { userActivityService } from "../api/userActivityService";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function Home() {
   const [products, setProducts] = useState([]);
@@ -12,7 +14,7 @@ export default function Home() {
   const [openCart, setOpenCart] = useState(false);
   const { authUser } = useAuth();
   const { cart, loadCart } = useCart();
-
+  const navigate = useNavigate();
   useEffect(() => {
     productService.list().then((res) => setProducts(res.data));
     loadCart(authUser.sub);
@@ -26,6 +28,16 @@ export default function Home() {
     return matchName && matchCat;
   });
 
+  useEffect(() => {
+    if (search.length > 1) {
+      userActivityService.log({
+        userId: authUser.sub,
+        action: "search",
+        searchQuery: search
+      });
+    }
+ }, [search]);
+ 
   // Apply sorting
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
@@ -43,6 +55,13 @@ export default function Home() {
   });
 
   const addToCart = async (productId) => {
+    console.log(authUser)
+    userActivityService.log({
+      userId: authUser.sub,
+      action: "add_to_cart",
+      productId:productId
+    });
+
     await cartService.add({
       userId: authUser.sub,
       productId,
@@ -144,7 +163,7 @@ export default function Home() {
               key={p.productId}
               className="group bg-white rounded-2xl shadow-sm hover:shadow-2xl transition-all duration-300 overflow-hidden flex flex-col"
             >
-              <a href={`/product/${p.productId}`} className="relative overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200 rounded-t-2xl">
+              <Link to={`/product/${p.productId}`} className="relative overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200 rounded-t-2xl">
                 {p.imageUrl ? (
                   <img
                     src={p.imageUrl}
@@ -165,14 +184,14 @@ export default function Home() {
                 <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-semibold text-gray-700">
                   {p.category}
                 </div>
-              </a>
+              </Link>
 
               <div className="p-5 flex flex-col flex-1">
-                <a href={`/product/${p.productId}`}>
+                <Link to={`/product/${p.productId}`}>
                   <h3 className="text-lg font-semibold text-gray-900 mb-1 hover:text-blue-600 transition line-clamp-2">
                     {p.name}
                   </h3>
-                </a>
+                </Link>
                 
                 <div className="mt-auto pt-4">
                   <div className="flex items-center justify-between mb-3">
@@ -351,7 +370,7 @@ export default function Home() {
                 </div>
 
                 <button
-                  onClick={() => (window.location.href = "/checkout")}
+                  onClick={() => navigate("/checkout")}
                   className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white px-6 py-4 rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl transition-all duration-200"
                 >
                   Proceed to Checkout

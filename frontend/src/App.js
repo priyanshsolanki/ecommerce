@@ -1,38 +1,34 @@
 import React from "react";
-import { BrowserRouter} from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 import PublicRoutes from "./routes/PublicRoutes";
 import { ToastContainer } from "react-toastify";
 import { useAuth } from "./context/AuthContext";
 import ProtectedRoutes from "./routes/ProtectedRoutes";
-
 import { getRole } from "./utils/CheckRoles";
 
 function AppWrapper() {
- 
+  const { authUser, token } = useAuth();
+  const userRole = token ? getRole(token) : null;
+  
+  // Conditionally render routes based on authentication
+  const isAuthenticated = !!token;
+
   return (
     <>
-      <PublicRoutes />
-      <ProtectedRoutes/>
+      {isAuthenticated ? <ProtectedRoutes /> : <PublicRoutes />}
     </>
   );
 }
 
 function App() {
-  const {authUser,token} = useAuth();
-
-  const userRole = token ? getRole(token) : null;
-
   return (
     <>
       <BrowserRouter>
-        {/* <AuthProvider> */}
-          <AppWrapper />
-        {/* </AuthProvider> */}
+        <AppWrapper />
       </BrowserRouter>
-      <ToastContainer/>
+      <ToastContainer />
     </>
   );
 }
 
 export default App;
-
